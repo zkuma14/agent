@@ -20,6 +20,12 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # --- 2. FastAPI 앱 초기화 ---
 app = FastAPI()
 
+@app.get("/")
+def read_root():
+    """
+    서버의 상태를 확인하기 위한 헬스 체크 엔드포인트입니다.
+    """
+    return {"status": "AI Agent Server is Running", "message": "Access /generate_ai_response for AI service."}
 # --- 3. Gemini 클라이언트 초기화 ---
 client = None 
 
