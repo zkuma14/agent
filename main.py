@@ -117,10 +117,10 @@ async def generate_ai_response(request: PromptRequest):
 
         # client.models.generate_content_async를 사용하여 비동기 호출을 권장합니다.
         # FastAPI 엔드포인트가 'async' 함수이므로 await를 사용합니다.
-        response = await client.models.generate_content_async( 
+        response = await client.aio.models.generate_content( 
             model="gemini-2.5-flash", 
-            contents=contents, # 컨텍스트가 포함된 전체 대화 목록
-            config=config      # 시스템 역할 설정
+            contents=contents, 
+            config=config      
         )
         ai_response_text = response.text
 
