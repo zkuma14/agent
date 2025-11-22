@@ -27,7 +27,7 @@ def read_root():
     서버의 상태를 확인하기 위한 헬스 체크 엔드포인트입니다.
     """
     return {"status": "AI Agent Server is Running", "message": "Access /generate_ai_response for AI service."}
-r
+
 router = APIRouter()
 @router.get("/", methods=["GET", "HEAD"])
 def read_root_alternate():
