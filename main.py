@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException
 import os
 import psycopg2
-import google.generativeai as genai # 최신 Gemini SDK로 변경
+import google.genai as genai
 from dotenv import load_dotenv
 
 # .env 파일에서 환경 변수 로드 (로컬 개발용)
