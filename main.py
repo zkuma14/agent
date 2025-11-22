@@ -1,13 +1,15 @@
-# FastAPI main.py 예시
+# FastAPI main.py 최종 예시
+
 from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException
+from google import genai 
+from google.genai import types
 import os
 import psycopg2
-# 최신 SDK 사용법: google.generativeai 대신 from google import genai
-from google import genai 
 from dotenv import load_dotenv
 
-# .env 파일에서 환경 변수 로드 (로컬 개발용. Render에서는 무시됨)
+# .env 파일에서 환경 변수 로드 (로컬 개발용)
+# Render에 배포 시에는 Render 환경 변수 설정을 사용합니다.
 load_dotenv()
 
 # --- 1. 환경 변수 로드 ---
@@ -19,22 +21,16 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 app = FastAPI()
 
 # --- 3. Gemini 클라이언트 초기화 ---
-# 모델 객체를 가져오는 과정(오류 유발)을 생략하고, client 객체만 초기화합니다.
 client = None 
 
 if GEMINI_API_KEY:
     try:
         # 클라이언트 객체를 생성하면서 API 키를 전달합니다.
         client = genai.Client(api_key=GEMINI_API_KEY) 
-        
-        # NOTE: model = client.models.get(...) 또는 client.get_model(...) 코드를 제거했습니다.
-        # 이 코드가 버전 호환성 오류를 일으키므로, client만 초기화하고 API 호출 시 모델 이름을 직접 전달합니다.
-
         print("Gemini Client Initialized Successfully.")
     except Exception as e:
-        # 초기화 오류 발생 시 로그에 기록합니다.
         print(f"Gemini Client Initialization Error: {e}")
-        client = None # 오류 발생 시 client를 None으로 설정하여 AI 서비스 접근을 막음
+        client = None
 else:
     print("FATAL: GEMINI_API_KEY environment variable is not set.")
 
@@ -62,7 +58,7 @@ class PromptRequest(BaseModel):
 
 # --- 6. API 엔드포인트 정의 (Node.js 서버가 호출할 주소) ---
 @app.post("/generate_ai_response")
-def generate_ai_response(request: PromptRequest):
+async def generate_ai_response(request: PromptRequest):
     # AI client가 초기화되지 않았을 경우 (API 키 누락 등)
     if not client:
         raise HTTPException(status_code=503, detail="AI Service not available (Check GEMINI_API_KEY).")
@@ -73,23 +69,68 @@ def generate_ai_response(request: PromptRequest):
         raise HTTPException(status_code=500, detail="Database connection error (Check DATABASE_URL).")
 
     try:
-        # 1. DB에서 이전 대화 기록 불러오기 (선택 사항: 맥락 유지)
-        # 여기에 DB 로직 추가
+        # --- 1. DB에서 이전 대화 기록 불러오기 (컨텍스트 유지) ---
+        cur = conn.cursor()
         
-        # 2. Gemini API 호출
-        full_prompt = "You are a helpful assistant. " + request.prompt
+        # 특정 user_id와 session_id에 해당하는 최근 대화 5개를 최신 순으로 가져옵니다.
+        cur.execute(
+            """
+            SELECT prompt, response FROM conversations
+            WHERE user_id = %s AND session_id = %s
+            ORDER BY created_at DESC
+            LIMIT 5
+            """,
+            (request.user_id, request.session_id)
+        )
+        history_records = cur.fetchall()
+        cur.close()
+
+        # 대화 기록을 Gemini API의 'contents' 형식에 맞게 변환합니다.
+        # 최신 대화가 뒤로 오도록 순서를 역전시킵니다.
+        chat_history = []
+        for prompt, response in reversed(history_records):
+            # 사용자의 질문 (role: user)
+            chat_history.append({"role": "user", "parts": [{"text": prompt}]})
+            # AI의 답변 (role: model)
+            chat_history.append({"role": "model", "parts": [{"text": response}]})
+            
+        # --- 2. Gemini API 호출 ---
         
-        # client 객체의 models를 통해 generate_content를 호출하고, 모델 이름을 인수로 전달합니다.
-        response = client.models.generate_content( 
-            model="gemini-1.5-flash", 
-            contents=full_prompt
+        # System Instruction: 에이전트의 역할 정의
+        system_instruction = "You are a helpful and friendly assistant. Use the provided chat history to answer the current prompt concisely."
+        
+        # history와 현재 프롬프트를 contents에 포함시킵니다.
+        # contents는 [chat_history, current_prompt] 순서입니다.
+        contents = chat_history + [{"role": "user", "parts": [{"text": request.prompt}]}]
+        
+        # GenerateContentConfig를 사용하여 system_instruction을 전달합니다.
+        config = types.GenerateContentConfig(
+            system_instruction=system_instruction
+        )
+
+        # client.models.generate_content_async를 사용하여 비동기 호출을 권장합니다.
+        # FastAPI 엔드포인트가 'async' 함수이므로 await를 사용합니다.
+        response = await client.models.generate_content_async( 
+            model="gemini-2.5-flash", 
+            contents=contents, # 컨텍스트가 포함된 전체 대화 목록
+            config=config      # 시스템 역할 설정
         )
         ai_response_text = response.text
 
-        # 3. DB에 대화 기록 저장 (사용자 입력 + AI 응답)
-        # 여기에 DB 저장 로직 추가
+        # --- 3. DB에 대화 기록 저장 (사용자 입력 + AI 응답) ---
+        save_cur = conn.cursor()
+        
+        save_cur.execute(
+            """
+            INSERT INTO conversations (user_id, session_id, prompt, response)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (request.user_id, request.session_id, request.prompt, ai_response_text)
+        )
+        conn.commit() # 변경사항을 DB에 최종 반영
+        save_cur.close()
 
-        # 4. Node.js 서버로 최종 응답 반환
+        # --- 4. Node.js 서버로 최종 응답 반환 ---
         return {"response": ai_response_text}
 
     except Exception as e:
