@@ -7,7 +7,6 @@ from google.genai import types
 import os
 import psycopg2
 from dotenv import load_dotenv
-from fastapi.routing import APIRoute
 
 # .env 파일에서 환경 변수 로드 (로컬 개발용)
 # Render에 배포 시에는 Render 환경 변수 설정을 사용합니다.
@@ -27,12 +26,6 @@ def read_root():
     서버의 상태를 확인하기 위한 헬스 체크 엔드포인트입니다.
     """
     return {"status": "AI Agent Server is Running", "message": "Access /generate_ai_response for AI service."}
-
-router = APIRouter()
-@router.get("/", methods=["GET", "HEAD"])
-def read_root_alternate():
-    return {"status": "AI Agent Server is Running", "message": "Access /generate_ai_response for AI service."}
-app.include_router(router)
 
 # --- 3. Gemini 클라이언트 초기화 ---
 client = None 
